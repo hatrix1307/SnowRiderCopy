@@ -3,4 +3,4 @@
 ## Mod menu (local)
 
 - Toggle menu: `Insert` or `F2`
-- Gravity: click **Detect gravity (experimental)** during a run, then use the gravity multiplier slider.
+- Click **Auto-detect physics** during a run, then adjust the sliders (gravity/speed/jump/rotation/accel).

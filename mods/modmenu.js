@@ -27,21 +27,32 @@
   const state =
     loadState() || {
       open: false,
-      gravityMultiplier: 1,
-      speedMultiplier: 1,
-      send: {
-        speedObject: "SlowMotion",
-        speedMethod: "setSpeed",
+      mods: {
+        gravity: 1,
+        speed: 1,
+        jump: 1,
+        rotation: 1,
+        accel: 1,
       },
       gravity: {
         detected: false,
         heapIndex: null, // index in HEAPF32 (not bytes)
         baseline: null,
       },
+      physics: {
+        detected: false,
+        vSpeedIndex: null,
+        baseMoveSpeedIndex: null,
+        speedAccelerationIndex: null,
+        rotationSpeedIndex: null,
+        jumpSpeedIndex: null,
+        baseline: {},
+      },
     };
 
   let unityInstance = null;
   let unityModule = null;
+  let enforceTimer = null;
   const logBuffer = [];
   const LOG_BUFFER_MAX = 250;
   let logSeq = 0;
@@ -171,49 +182,47 @@
             <h3>Gravity</h3>
             <div class="sr-mm-row">
               <label for="sr-mm-grav">Gravity multiplier</label>
-              <div class="sr-mm-value" id="sr-mm-grav-val">x${fmt(state.gravityMultiplier, 2)}</div>
+              <div class="sr-mm-value" id="sr-mm-grav-val">x${fmt(state.mods.gravity, 2)}</div>
             </div>
-            <input id="sr-mm-grav" type="range" min="0.2" max="3" step="0.05" value="${state.gravityMultiplier}">
+            <input id="sr-mm-grav" type="range" min="0.2" max="3" step="0.05" value="${state.mods.gravity}">
             <div class="sr-mm-actions" style="margin-top:10px;">
-              <button class="sr-mm-btn sr-mm-primary" id="sr-mm-detect-grav">Detect gravity (experimental)</button>
+              <button class="sr-mm-btn sr-mm-primary" id="sr-mm-detect-grav">Auto-detect physics</button>
               <button class="sr-mm-btn" id="sr-mm-reset-grav">Reset</button>
             </div>
             <div class="sr-mm-status" id="sr-mm-grav-status" style="margin-top:8px;"></div>
           </div>
 
           <div class="sr-mm-section">
-            <h3>Speed</h3>
+            <h3>Physics Mods</h3>
             <div class="sr-mm-row">
               <label for="sr-mm-speed">Speed multiplier</label>
-              <div class="sr-mm-value" id="sr-mm-speed-val">x${fmt(state.speedMultiplier, 2)}</div>
+              <div class="sr-mm-value" id="sr-mm-speed-val">x${fmt(state.mods.speed, 2)}</div>
             </div>
-            <input id="sr-mm-speed" type="range" min="0.25" max="3" step="0.05" value="${state.speedMultiplier}">
+            <input id="sr-mm-speed" type="range" min="0.25" max="3" step="0.05" value="${state.mods.speed}">
+
+            <div class="sr-mm-row" style="margin-top:10px;">
+              <label for="sr-mm-jump">Jump multiplier</label>
+              <div class="sr-mm-value" id="sr-mm-jump-val">x${fmt(state.mods.jump, 2)}</div>
+            </div>
+            <input id="sr-mm-jump" type="range" min="0.25" max="3" step="0.05" value="${state.mods.jump}">
+
+            <div class="sr-mm-row" style="margin-top:10px;">
+              <label for="sr-mm-rot">Rotation multiplier</label>
+              <div class="sr-mm-value" id="sr-mm-rot-val">x${fmt(state.mods.rotation, 2)}</div>
+            </div>
+            <input id="sr-mm-rot" type="range" min="0.25" max="3" step="0.05" value="${state.mods.rotation}">
+
+            <div class="sr-mm-row" style="margin-top:10px;">
+              <label for="sr-mm-accel">Accel multiplier</label>
+              <div class="sr-mm-value" id="sr-mm-accel-val">x${fmt(state.mods.accel, 2)}</div>
+            </div>
+            <input id="sr-mm-accel" type="range" min="0.25" max="3" step="0.05" value="${state.mods.accel}">
+
             <div class="sr-mm-actions" style="margin-top:10px;">
-              <button class="sr-mm-btn sr-mm-primary" id="sr-mm-apply-speed">Apply</button>
+              <button class="sr-mm-btn sr-mm-primary" id="sr-mm-apply-physics">Apply now</button>
+              <button class="sr-mm-btn" id="sr-mm-reset-physics">Reset physics</button>
             </div>
-            <div class="sr-mm-status" id="sr-mm-speed-status" style="margin-top:8px;"></div>
-            <details class="sr-mm-advanced" style="margin-top:8px;">
-              <summary>Advanced (object/method)</summary>
-              <div class="sr-mm-adv-grid">
-                <div>
-                  <input id="sr-mm-speed-object" list="sr-mm-objects" type="text" placeholder="GameObject" value="${escapeHtml(
-                  state.send.speedObject
-                )}">
-                </div>
-                <div>
-                  <input id="sr-mm-speed-method" type="text" placeholder="Method" value="${escapeHtml(
-                  state.send.speedMethod
-                )}">
-                </div>
-              </div>
-              <datalist id="sr-mm-objects"></datalist>
-              <div class="sr-mm-actions" style="margin-top:10px;">
-                <button class="sr-mm-btn" id="sr-mm-use-sledgephysics" type="button">Use SledgePhysics</button>
-              </div>
-              <div class="sr-mm-status" style="margin-top:8px;">
-                Tries <code>SendMessage(object, method, number)</code>. If it does nothing, the game may not expose a speed hook.
-              </div>
-            </details>
+            <div class="sr-mm-status" id="sr-mm-physics-status" style="margin-top:8px;"></div>
           </div>
 
           <div class="sr-mm-section">
@@ -238,48 +247,68 @@
 
     const gravSlider = document.getElementById("sr-mm-grav");
     gravSlider.addEventListener("input", () => {
-      state.gravityMultiplier = Number(gravSlider.value);
-      document.getElementById("sr-mm-grav-val").textContent = `x${fmt(state.gravityMultiplier, 2)}`;
+      state.mods.gravity = Number(gravSlider.value);
+      document.getElementById("sr-mm-grav-val").textContent = `x${fmt(state.mods.gravity, 2)}`;
       saveState(state);
-      applyGravity();
+      applyGravityAndPhysics();
     });
 
     document.getElementById("sr-mm-detect-grav").addEventListener("click", async () => {
-      await detectGravityInteractive();
+      await detectPhysicsInteractive();
     });
 
     document.getElementById("sr-mm-reset-grav").addEventListener("click", () => {
-      state.gravityMultiplier = 1;
-      gravSlider.value = String(state.gravityMultiplier);
-      document.getElementById("sr-mm-grav-val").textContent = `x${fmt(state.gravityMultiplier, 2)}`;
+      state.mods.gravity = 1;
+      gravSlider.value = String(state.mods.gravity);
+      document.getElementById("sr-mm-grav-val").textContent = `x${fmt(state.mods.gravity, 2)}`;
       saveState(state);
-      applyGravity(true);
+      applyGravityAndPhysics(true);
     });
 
     const speedSlider = document.getElementById("sr-mm-speed");
     speedSlider.addEventListener("input", () => {
-      state.speedMultiplier = Number(speedSlider.value);
-      document.getElementById("sr-mm-speed-val").textContent = `x${fmt(state.speedMultiplier, 2)}`;
+      state.mods.speed = Number(speedSlider.value);
+      document.getElementById("sr-mm-speed-val").textContent = `x${fmt(state.mods.speed, 2)}`;
       saveState(state);
     });
 
-    document.getElementById("sr-mm-apply-speed").addEventListener("click", () => applySpeed());
-
-    document.getElementById("sr-mm-speed-object").addEventListener("change", (e) => {
-      state.send.speedObject = String(e.target.value || "").trim();
-      saveState(state);
-    });
-    document.getElementById("sr-mm-speed-method").addEventListener("change", (e) => {
-      state.send.speedMethod = String(e.target.value || "").trim();
+    const jumpSlider = document.getElementById("sr-mm-jump");
+    jumpSlider.addEventListener("input", () => {
+      state.mods.jump = Number(jumpSlider.value);
+      document.getElementById("sr-mm-jump-val").textContent = `x${fmt(state.mods.jump, 2)}`;
       saveState(state);
     });
 
-    document.getElementById("sr-mm-use-sledgephysics").addEventListener("click", () => {
-      state.send.speedObject = "SledgePhysics";
-      const el = document.getElementById("sr-mm-speed-object");
-      if (el) el.value = "SledgePhysics";
+    const rotSlider = document.getElementById("sr-mm-rot");
+    rotSlider.addEventListener("input", () => {
+      state.mods.rotation = Number(rotSlider.value);
+      document.getElementById("sr-mm-rot-val").textContent = `x${fmt(state.mods.rotation, 2)}`;
       saveState(state);
-      updateStatus();
+    });
+
+    const accelSlider = document.getElementById("sr-mm-accel");
+    accelSlider.addEventListener("input", () => {
+      state.mods.accel = Number(accelSlider.value);
+      document.getElementById("sr-mm-accel-val").textContent = `x${fmt(state.mods.accel, 2)}`;
+      saveState(state);
+    });
+
+    document.getElementById("sr-mm-apply-physics").addEventListener("click", () => applyGravityAndPhysics());
+    document.getElementById("sr-mm-reset-physics").addEventListener("click", () => {
+      state.mods.speed = 1;
+      state.mods.jump = 1;
+      state.mods.rotation = 1;
+      state.mods.accel = 1;
+      speedSlider.value = String(state.mods.speed);
+      jumpSlider.value = String(state.mods.jump);
+      rotSlider.value = String(state.mods.rotation);
+      accelSlider.value = String(state.mods.accel);
+      document.getElementById("sr-mm-speed-val").textContent = `x${fmt(state.mods.speed, 2)}`;
+      document.getElementById("sr-mm-jump-val").textContent = `x${fmt(state.mods.jump, 2)}`;
+      document.getElementById("sr-mm-rot-val").textContent = `x${fmt(state.mods.rotation, 2)}`;
+      document.getElementById("sr-mm-accel-val").textContent = `x${fmt(state.mods.accel, 2)}`;
+      saveState(state);
+      applyGravityAndPhysics(true);
     });
 
     updateStatus();
@@ -303,31 +332,55 @@
 
   function updateStatus(extra = {}) {
     const gravStatus = document.getElementById("sr-mm-grav-status");
-    const speedStatus = document.getElementById("sr-mm-speed-status");
+    const physicsStatus = document.getElementById("sr-mm-physics-status");
     const debugStatus = document.getElementById("sr-mm-debug-status");
-    if (!gravStatus || !speedStatus) return;
+    if (!gravStatus || !physicsStatus) return;
 
     const gi = getUnity();
     if (!gi) {
       gravStatus.textContent = "Waiting for Unity to finish loading…";
-      speedStatus.textContent = "Waiting for Unity to finish loading…";
+      physicsStatus.textContent = "Waiting for Unity to finish loading…";
       if (debugStatus) debugStatus.textContent = "Unity not ready yet.";
       return;
     }
 
+    const module = getModule();
+    const heap = module && module.HEAPF32 ? module.HEAPF32 : null;
+
     if (!state.gravity.detected) {
       gravStatus.textContent =
         extra.gravityStatus ||
-        "Not detected yet. Click “Detect gravity” while you’re in a run (when the sled is moving).";
+        "Not detected yet. Click “Auto-detect physics” while you’re in a run (when the sled is moving).";
     } else {
+      const cur =
+        heap && Number.isInteger(state.gravity.heapIndex) ? heap[state.gravity.heapIndex] : NaN;
       gravStatus.textContent =
         extra.gravityStatus ||
-        `Detected. gravityAcc @ HEAPF32[${state.gravity.heapIndex}] baseline=${fmt(state.gravity.baseline, 3)}.`;
+        `Detected. gravityAcc @ HEAPF32[${state.gravity.heapIndex}] baseline=${fmt(
+          state.gravity.baseline,
+          3
+        )} current=${fmt(cur, 3)}.`;
     }
 
-    speedStatus.textContent =
-      extra.speedStatus ||
-      `Hook: ${state.send.speedObject}.${state.send.speedMethod} (SendMessage).`;
+    physicsStatus.textContent =
+      extra.physicsStatus ||
+      (state.physics.detected
+        ? `Detected: baseMoveSpeed[${state.physics.baseMoveSpeedIndex}]=${fmt(
+            heap && Number.isInteger(state.physics.baseMoveSpeedIndex) ? heap[state.physics.baseMoveSpeedIndex] : NaN,
+            2
+          )} jump[${state.physics.jumpSpeedIndex}]=${fmt(
+            heap && Number.isInteger(state.physics.jumpSpeedIndex) ? heap[state.physics.jumpSpeedIndex] : NaN,
+            2
+          )} rot[${state.physics.rotationSpeedIndex}]=${fmt(
+            heap && Number.isInteger(state.physics.rotationSpeedIndex) ? heap[state.physics.rotationSpeedIndex] : NaN,
+            2
+          )} accel[${state.physics.speedAccelerationIndex}]=${fmt(
+            heap && Number.isInteger(state.physics.speedAccelerationIndex)
+              ? heap[state.physics.speedAccelerationIndex]
+              : NaN,
+            3
+          )}`
+        : "Not detected yet. Click “Auto-detect physics” during a run.");
 
     if (debugStatus) {
       const last = logBuffer.length ? logBuffer[logBuffer.length - 1].line : "";
@@ -335,21 +388,12 @@
     }
   }
 
-  async function applySpeed() {
-    ensureRoot();
-    const result = await sendMessageChecked(
-      state.send.speedObject,
-      state.send.speedMethod,
-      Number(state.speedMultiplier)
-    );
-    updateStatus({
-      speedStatus: result.ok
-        ? `Sent: ${state.send.speedObject}.${state.send.speedMethod}(${fmt(state.speedMultiplier, 2)})`
-        : `Failed: ${result.reason}`,
-    });
+  function applyGravityAndPhysics(forceReset = false, silent = false) {
+    applyGravity(forceReset, silent);
+    applyPhysics(forceReset, silent);
   }
 
-  function applyGravity(forceReset = false) {
+  function applyGravity(forceReset = false, silent = false) {
     if (!state.gravity.detected) return;
     const module = getModule();
     if (!module || !module.HEAPF32) return;
@@ -359,11 +403,46 @@
     if (!Number.isInteger(idx) || !Number.isFinite(baseline)) return;
     if (idx < 0 || idx >= module.HEAPF32.length) return;
 
-    const mult = forceReset ? 1 : clamp(Number(state.gravityMultiplier), 0.05, 5);
+    const mult = forceReset ? 1 : clamp(Number(state.mods.gravity), 0.05, 5);
     module.HEAPF32[idx] = baseline * mult;
-    updateStatus({
-      gravityStatus: `Applied gravity: ${fmt(module.HEAPF32[idx], 3)} (x${fmt(mult, 2)})`,
-    });
+    if (!silent) {
+      updateStatus({
+        gravityStatus: `Applied gravity: ${fmt(module.HEAPF32[idx], 3)} (x${fmt(mult, 2)})`,
+      });
+    }
+  }
+
+  function applyPhysics(forceReset = false, silent = false) {
+    if (!state.physics.detected) return;
+    const module = getModule();
+    if (!module || !module.HEAPF32) return;
+    const heap = module.HEAPF32;
+
+    const applyIdx = (key, idx, mult) => {
+      if (!Number.isInteger(idx) || idx < 0 || idx >= heap.length) return;
+      const base = state.physics.baseline[key];
+      if (!Number.isFinite(base)) return;
+      heap[idx] = base * mult;
+    };
+
+    const speedMult = forceReset ? 1 : clamp(Number(state.mods.speed), 0.05, 8);
+    const jumpMult = forceReset ? 1 : clamp(Number(state.mods.jump), 0.05, 8);
+    const rotMult = forceReset ? 1 : clamp(Number(state.mods.rotation), 0.05, 8);
+    const accelMult = forceReset ? 1 : clamp(Number(state.mods.accel), 0.05, 8);
+
+    applyIdx("baseMoveSpeed", state.physics.baseMoveSpeedIndex, speedMult);
+    applyIdx("jumpSpeed", state.physics.jumpSpeedIndex, jumpMult);
+    applyIdx("rotationSpeed", state.physics.rotationSpeedIndex, rotMult);
+    applyIdx("speedAcceleration", state.physics.speedAccelerationIndex, accelMult);
+
+    if (!silent) {
+      updateStatus({
+        physicsStatus: `Applied: speed x${fmt(speedMult, 2)} jump x${fmt(jumpMult, 2)} rot x${fmt(
+          rotMult,
+          2
+        )} accel x${fmt(accelMult, 2)}`,
+      });
+    }
   }
 
   async function sleep(ms) {
@@ -391,7 +470,7 @@
     return closeness * signal;
   }
 
-  async function detectGravityInteractive() {
+  async function detectPhysicsInteractive() {
     ensureRoot();
     updateStatus({ gravityStatus: "Detecting… keep the sled moving for a few seconds." });
 
@@ -519,8 +598,113 @@
       )}).`,
     });
 
-    // Apply current multiplier immediately.
-    applyGravity();
+    await detectPhysicsFromGravity(best.gIdx);
+
+    // Apply current multipliers immediately.
+    applyGravityAndPhysics();
+  }
+
+  function isFinitePlausibleFloat(v) {
+    return Number.isFinite(v) && Math.abs(v) <= 5000;
+  }
+
+  async function detectPhysicsFromGravity(gravityIdx) {
+    const module = getModule();
+    const heap = module && module.HEAPF32;
+    if (!heap) return;
+    const g = gravityIdx;
+
+    // Guess vSpeed adjacent to gravity.
+    const candidates = [g - 1, g + 1, g - 2, g + 2].filter((i) => i >= 0 && i < heap.length);
+    let vSpeedIndex = null;
+    let bestDelta = 0;
+    for (const i of candidates) {
+      const a = heap[i];
+      if (!isFinitePlausibleFloat(a)) continue;
+      await sleep(45);
+      const b = heap[i];
+      const d = Math.abs(b - a);
+      if (d > bestDelta) {
+        bestDelta = d;
+        vSpeedIndex = i;
+      }
+    }
+    if (!Number.isInteger(vSpeedIndex)) vSpeedIndex = isFinitePlausibleFloat(heap[g - 1]) ? g - 1 : g + 1;
+
+    // Scan backwards from just before vSpeed for the last contiguous run of finite floats (likely config fields),
+    // stopping at NaNs/inf/very large pointer-like values.
+    const scanStart = Math.min(g, vSpeedIndex ?? g) - 1;
+    let end = scanStart;
+    while (end > 8 && !isFinitePlausibleFloat(heap[end])) end -= 1;
+    let start = end;
+    while (start > 8 && isFinitePlausibleFloat(heap[start - 1])) start -= 1;
+    const runLen = end - start + 1;
+
+    const pickFirstInRange = (from, to, min, max, afterIdx = null) => {
+      for (let i = from; i <= to; i++) {
+        if (afterIdx !== null && i <= afterIdx) continue;
+        const v = heap[i];
+        if (!Number.isFinite(v)) continue;
+        if (v >= min && v <= max) return i;
+      }
+      return null;
+    };
+    const pickLastInRange = (from, to, min, max) => {
+      for (let i = to; i >= from; i--) {
+        const v = heap[i];
+        if (!Number.isFinite(v)) continue;
+        if (v >= min && v <= max) return i;
+      }
+      return null;
+    };
+
+    let baseMoveSpeedIndex = null;
+    let speedAccelerationIndex = null;
+    let rotationSpeedIndex = null;
+    let jumpSpeedIndex = null;
+
+    if (runLen >= 5 && runLen <= 32) {
+      // Heuristics:
+      // - jumpSpeed is usually near the end of the run (right before pointer fields), and is a positive float.
+      // - baseMoveSpeed near start.
+      baseMoveSpeedIndex = pickFirstInRange(start, end, 0.5, 160);
+      speedAccelerationIndex = pickFirstInRange(start, end, 0.0001, 20, baseMoveSpeedIndex);
+      rotationSpeedIndex = pickFirstInRange(start, end, 0.01, 120, speedAccelerationIndex);
+      jumpSpeedIndex = pickLastInRange(start, end, 0.5, 200);
+    }
+
+    // Store baselines.
+    const baseline = {};
+    const storeBase = (key, idx) => {
+      if (!Number.isInteger(idx) || idx < 0 || idx >= heap.length) return;
+      const v = heap[idx];
+      if (!Number.isFinite(v)) return;
+      baseline[key] = v;
+    };
+    storeBase("baseMoveSpeed", baseMoveSpeedIndex);
+    storeBase("speedAcceleration", speedAccelerationIndex);
+    storeBase("rotationSpeed", rotationSpeedIndex);
+    storeBase("jumpSpeed", jumpSpeedIndex);
+
+    state.physics.detected = !!(
+      Number.isInteger(baseMoveSpeedIndex) ||
+      Number.isInteger(speedAccelerationIndex) ||
+      Number.isInteger(rotationSpeedIndex) ||
+      Number.isInteger(jumpSpeedIndex)
+    );
+    state.physics.vSpeedIndex = vSpeedIndex ?? null;
+    state.physics.baseMoveSpeedIndex = baseMoveSpeedIndex;
+    state.physics.speedAccelerationIndex = speedAccelerationIndex;
+    state.physics.rotationSpeedIndex = rotationSpeedIndex;
+    state.physics.jumpSpeedIndex = jumpSpeedIndex;
+    state.physics.baseline = baseline;
+    saveState(state);
+
+    updateStatus({
+      physicsStatus: state.physics.detected
+        ? `Detected physics near gravity. baseMoveSpeed=${baseMoveSpeedIndex} jumpSpeed=${jumpSpeedIndex} rot=${rotationSpeedIndex} accel=${speedAccelerationIndex}`
+        : "Physics detection failed (gravity detected, but couldn't infer other fields).",
+    });
   }
 
   function onKeyDown(e) {
@@ -550,9 +734,15 @@
       unityModule = gi.Module;
       hookUnityLogging();
       ensureRoot();
-      updateStatus({ gravityStatus: "Unity ready. Click Detect gravity while in a run." });
+      updateStatus({ gravityStatus: "Unity ready. Start a run, then click Auto-detect physics." });
       // Re-apply persisted gravity if we already detected a pointer in a prior session.
-      applyGravity();
+      applyGravityAndPhysics();
+      if (!enforceTimer) {
+        enforceTimer = setInterval(() => {
+          // Re-apply silently so gameplay updates can't undo our values.
+          applyGravityAndPhysics(false, true);
+        }, 250);
+      }
     },
   };
 
@@ -560,28 +750,6 @@
   else init();
 
   function refreshObjectDatalists() {
-    const dl = document.getElementById("sr-mm-objects");
-    if (!dl) return;
-    const current = new Set(Array.from(dl.querySelectorAll("option")).map((o) => o.value));
-    // Add a few common names + discovered names.
-    const base = [
-      "SledgePhysics",
-      "GenerationControl",
-      "ServerManager",
-      "GameManager",
-      "Canvas",
-      "PlayCanvas",
-      "Reporter",
-      "Loader",
-      "RewardLoader",
-    ];
-    for (const name of base) knownObjects.add(name);
-    const names = Array.from(knownObjects).sort((a, b) => a.localeCompare(b)).slice(0, 120);
-    for (const name of names) {
-      if (current.has(name)) continue;
-      const opt = document.createElement("option");
-      opt.value = name;
-      dl.appendChild(opt);
-    }
+    // legacy no-op (we removed SendMessage UI).
   }
 })();

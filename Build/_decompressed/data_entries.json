@@ -1,0 +1,32 @@
+[
+  {
+    "path": "Il2CppData/Metadata/global-metadata.dat",
+    "dataOffset": 3407261,
+    "dataSize": 5964684
+  },
+  {
+    "path": "Resources/unity_default_resources",
+    "dataOffset": 240,
+    "dataSize": 3379396
+  },
+  {
+    "path": "data.unity3d",
+    "dataOffset": 9372069,
+    "dataSize": 2902155
+  },
+  {
+    "path": "sharedassets0.resource",
+    "dataOffset": 12274224,
+    "dataSize": 1782327
+  },
+  {
+    "path": "Managed/mono/2.0/machine.config",
+    "dataOffset": 3379636,
+    "dataSize": 27625
+  },
+  {
+    "path": "boot.config",
+    "dataOffset": 9371945,
+    "dataSize": 124
+  }
+]
