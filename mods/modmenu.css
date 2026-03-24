@@ -1,0 +1,171 @@
+/* Snow Rider mod menu overlay */
+
+#sr-modmenu-root {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 2147483647;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color: #e9eef7;
+  pointer-events: none;
+}
+
+#sr-modmenu-root * {
+  box-sizing: border-box;
+}
+
+#sr-modmenu-toggle-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+  user-select: none;
+}
+
+#sr-modmenu-panel {
+  margin-top: 10px;
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  border-radius: 14px;
+  background: rgba(15, 18, 28, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+#sr-modmenu-panel.sr-hidden {
+  display: none;
+}
+
+.sr-mm-header {
+  padding: 12px 12px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+.sr-mm-title {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.2px;
+}
+
+.sr-mm-subtitle {
+  opacity: 0.85;
+  font-size: 12px;
+}
+
+.sr-mm-body {
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.sr-mm-section {
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+.sr-mm-section h3 {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  opacity: 0.9;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+}
+
+.sr-mm-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.sr-mm-row label {
+  font-size: 13px;
+}
+
+.sr-mm-row input[type="range"] {
+  width: 100%;
+}
+
+.sr-mm-row .sr-mm-value {
+  min-width: 64px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.sr-mm-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sr-mm-btn {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: #e9eef7;
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sr-mm-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.sr-mm-btn:active {
+  transform: translateY(1px);
+}
+
+.sr-mm-btn.sr-mm-primary {
+  border-color: rgba(82, 173, 255, 0.55);
+  background: rgba(82, 173, 255, 0.18);
+}
+
+.sr-mm-status {
+  font-size: 12px;
+  opacity: 0.85;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.sr-mm-advanced summary {
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.sr-mm-advanced .sr-mm-adv-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.sr-mm-advanced input[type="text"] {
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.20);
+  color: #e9eef7;
+  font-size: 12px;
+}
+
