@@ -42,6 +42,10 @@
 
   let unityInstance = null;
   let unityModule = null;
+  const logBuffer = [];
+  const LOG_BUFFER_MAX = 250;
+  let logSeq = 0;
+  const knownObjects = new Set();
 
   function getUnity() {
     const gi = unityInstance || window.gameInstance;
@@ -64,6 +68,83 @@
     } catch {
       return false;
     }
+  }
+
+  function pushLogLine(line) {
+    logSeq += 1;
+    logBuffer.push({ seq: logSeq, line: String(line ?? "") });
+    while (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
+
+    const text = String(line ?? "");
+    const extracted = new Set();
+    const m1 = text.match(/Game Object '([^']+)'/);
+    if (m1 && m1[1]) extracted.add(m1[1]);
+    const m2 = text.match(/SendMessage: object ([^!]+) not found!/);
+    if (m2 && m2[1]) extracted.add(m2[1].trim());
+    const m3 = text.match(/Scene hierarchy path \"([^\"]+)\"/);
+    if (m3 && m3[1]) {
+      const first = m3[1].split("/")[0];
+      if (first) extracted.add(first);
+    }
+    for (const name of extracted) {
+      if (!name || name.length > 64) continue;
+      knownObjects.add(name);
+    }
+    refreshObjectDatalists();
+  }
+
+  function hookUnityLogging() {
+    const module = getModule();
+    if (!module) return;
+    if (module.__srModsPrintHooked) return;
+    module.__srModsPrintHooked = true;
+
+    const origPrint = module.print;
+    const origPrintErr = module.printErr;
+
+    module.print = function (...args) {
+      try {
+        if (args.length) pushLogLine(args.join(" "));
+      } catch {
+        // ignore
+      }
+      if (typeof origPrint === "function") return origPrint.apply(this, args);
+      // UnityLoader expects print to exist, but not always.
+      try {
+        // eslint-disable-next-line no-console
+        console.log(...args);
+      } catch {
+        // ignore
+      }
+    };
+
+    module.printErr = function (...args) {
+      try {
+        if (args.length) pushLogLine(args.join(" "));
+      } catch {
+        // ignore
+      }
+      if (typeof origPrintErr === "function") return origPrintErr.apply(this, args);
+      try {
+        // eslint-disable-next-line no-console
+        console.error(...args);
+      } catch {
+        // ignore
+      }
+    };
+  }
+
+  async function sendMessageChecked(goName, methodName, param) {
+    const startSeq = logSeq;
+    const okCall = sendMessage(goName, methodName, param);
+    if (!okCall) return { ok: false, reason: "SendMessage threw (Unity not ready?)" };
+
+    // Give Unity a brief moment to print SendMessage errors (if any).
+    await sleep(75);
+    const newLines = logBuffer.filter((x) => x.seq > startSeq).map((x) => x.line);
+    const sendMsgLine = newLines.find((l) => String(l).startsWith("SendMessage:"));
+    if (sendMsgLine) return { ok: false, reason: sendMsgLine };
+    return { ok: true, reason: "No SendMessage error observed." };
   }
 
   function ensureRoot() {
@@ -114,12 +195,20 @@
             <details class="sr-mm-advanced" style="margin-top:8px;">
               <summary>Advanced (object/method)</summary>
               <div class="sr-mm-adv-grid">
-                <input id="sr-mm-speed-object" type="text" placeholder="GameObject" value="${escapeHtml(
+                <div>
+                  <input id="sr-mm-speed-object" list="sr-mm-objects" type="text" placeholder="GameObject" value="${escapeHtml(
                   state.send.speedObject
                 )}">
-                <input id="sr-mm-speed-method" type="text" placeholder="Method" value="${escapeHtml(
+                </div>
+                <div>
+                  <input id="sr-mm-speed-method" type="text" placeholder="Method" value="${escapeHtml(
                   state.send.speedMethod
                 )}">
+                </div>
+              </div>
+              <datalist id="sr-mm-objects"></datalist>
+              <div class="sr-mm-actions" style="margin-top:10px;">
+                <button class="sr-mm-btn" id="sr-mm-use-sledgephysics" type="button">Use SledgePhysics</button>
               </div>
               <div class="sr-mm-status" style="margin-top:8px;">
                 Tries <code>SendMessage(object, method, number)</code>. If it does nothing, the game may not expose a speed hook.
@@ -130,6 +219,11 @@
           <div class="sr-mm-section">
             <h3>Keys</h3>
             <div class="sr-mm-status">Toggle menu: <code>Insert</code> or <code>F2</code></div>
+          </div>
+
+          <div class="sr-mm-section">
+            <h3>Debug</h3>
+            <div class="sr-mm-status" id="sr-mm-debug-status">Waiting for logs…</div>
           </div>
         </div>
       </div>
@@ -180,6 +274,14 @@
       saveState(state);
     });
 
+    document.getElementById("sr-mm-use-sledgephysics").addEventListener("click", () => {
+      state.send.speedObject = "SledgePhysics";
+      const el = document.getElementById("sr-mm-speed-object");
+      if (el) el.value = "SledgePhysics";
+      saveState(state);
+      updateStatus();
+    });
+
     updateStatus();
   }
 
@@ -202,12 +304,14 @@
   function updateStatus(extra = {}) {
     const gravStatus = document.getElementById("sr-mm-grav-status");
     const speedStatus = document.getElementById("sr-mm-speed-status");
+    const debugStatus = document.getElementById("sr-mm-debug-status");
     if (!gravStatus || !speedStatus) return;
 
     const gi = getUnity();
     if (!gi) {
       gravStatus.textContent = "Waiting for Unity to finish loading…";
       speedStatus.textContent = "Waiting for Unity to finish loading…";
+      if (debugStatus) debugStatus.textContent = "Unity not ready yet.";
       return;
     }
 
@@ -224,15 +328,24 @@
     speedStatus.textContent =
       extra.speedStatus ||
       `Hook: ${state.send.speedObject}.${state.send.speedMethod} (SendMessage).`;
+
+    if (debugStatus) {
+      const last = logBuffer.length ? logBuffer[logBuffer.length - 1].line : "";
+      debugStatus.textContent = extra.debugStatus || (last ? `Last log: ${last}` : "No Unity logs captured yet.");
+    }
   }
 
-  function applySpeed() {
+  async function applySpeed() {
     ensureRoot();
-    const ok = sendMessage(state.send.speedObject, state.send.speedMethod, Number(state.speedMultiplier));
+    const result = await sendMessageChecked(
+      state.send.speedObject,
+      state.send.speedMethod,
+      Number(state.speedMultiplier)
+    );
     updateStatus({
-      speedStatus: ok
+      speedStatus: result.ok
         ? `Sent: ${state.send.speedObject}.${state.send.speedMethod}(${fmt(state.speedMultiplier, 2)})`
-        : "SendMessage failed (object/method might be wrong, or Unity not ready).",
+        : `Failed: ${result.reason}`,
     });
   }
 
@@ -289,6 +402,7 @@
     }
     unityInstance = gi;
     unityModule = gi.Module;
+    hookUnityLogging();
 
     const module = getModule();
     const heap = module && module.HEAPF32;
@@ -297,15 +411,17 @@
       return;
     }
 
-    // Coarse pass: find floats that change over time (potential vSpeed-like fields).
-    const stride = 64;
+    // Coarse pass: sample floats across the heap and keep ones that change (potential vSpeed-like fields).
     const candidates = [];
-    for (let i = 0; i < heap.length - 2; i += stride) {
+    const sampleCount = 90000;
+    let seed = (Date.now() ^ (heap.length >>> 1)) >>> 0;
+    for (let s = 0; s < sampleCount; s++) {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      const i = seed % (heap.length - 8);
       const v = heap[i];
       if (!Number.isFinite(v)) continue;
       if (Math.abs(v) > 250) continue;
       candidates.push(i);
-      if (candidates.length > 120000) break; // cap work
     }
 
     const snap1 = sampleAt(heap, candidates);
@@ -326,24 +442,20 @@
       return;
     }
 
-    // Fine pass: for each moving index, look around it for an adjacent stable float (gravityAcc candidate).
+    // Fine pass: for each moving index, look around it for a nearby stable positive float (gravityAcc candidate).
     const finePairs = [];
-    for (const baseIdx of moving.slice(0, 6000)) {
-      for (let o = -stride; o <= stride; o++) {
-        const i = baseIdx + o;
-        if (i < 4 || i >= heap.length - 4) continue;
-        const v1 = heap[i];
-        if (!Number.isFinite(v1) || Math.abs(v1) > 300) continue;
-        for (const dir of [-1, 1]) {
-          const gIdx = i + dir;
-          const gVal1 = heap[gIdx];
-          if (!Number.isFinite(gVal1) || gVal1 <= 0 || gVal1 > 400) continue;
-          finePairs.push({ vIdx: i, gIdx, gVal: gVal1 });
-          if (finePairs.length >= 250) break;
-        }
-        if (finePairs.length >= 250) break;
+    const radius = 256;
+    for (const vIdx of moving.slice(0, 4500)) {
+      const start = Math.max(8, vIdx - radius);
+      const end = Math.min(heap.length - 8, vIdx + radius);
+      for (let gIdx = start; gIdx < end; gIdx++) {
+        if (gIdx === vIdx) continue;
+        const gVal = heap[gIdx];
+        if (!Number.isFinite(gVal) || gVal <= 0 || gVal > 250) continue;
+        finePairs.push({ vIdx, gIdx, gVal });
+        if (finePairs.length >= 700) break;
       }
-      if (finePairs.length >= 250) break;
+      if (finePairs.length >= 700) break;
     }
 
     if (finePairs.length === 0) {
@@ -354,8 +466,8 @@
       return;
     }
 
-    // Validate candidates by temporarily scaling the neighbor and observing the vIdx delta magnitude.
-    const expectedFactor = 1.6;
+    // Validate candidates by temporarily scaling the candidate and observing the vIdx delta magnitude.
+    const expectedFactor = 1.75;
     let best = null;
     for (const pair of finePairs) {
       const { vIdx, gIdx } = pair;
@@ -385,7 +497,7 @@
 
       const score = scoreGravityCandidate(before, after, expectedFactor);
       if (!best || score > best.score) best = { vIdx, gIdx, baseline: originalG, score };
-      if (best && best.score > 0.75) break; // good enough
+      if (best && best.score > 0.78) break; // good enough
     }
 
     if (!best || best.score < 0.25) {
@@ -436,6 +548,7 @@
     onUnityReady(gi) {
       unityInstance = gi;
       unityModule = gi.Module;
+      hookUnityLogging();
       ensureRoot();
       updateStatus({ gravityStatus: "Unity ready. Click Detect gravity while in a run." });
       // Re-apply persisted gravity if we already detected a pointer in a prior session.
@@ -445,4 +558,30 @@
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
+
+  function refreshObjectDatalists() {
+    const dl = document.getElementById("sr-mm-objects");
+    if (!dl) return;
+    const current = new Set(Array.from(dl.querySelectorAll("option")).map((o) => o.value));
+    // Add a few common names + discovered names.
+    const base = [
+      "SledgePhysics",
+      "GenerationControl",
+      "ServerManager",
+      "GameManager",
+      "Canvas",
+      "PlayCanvas",
+      "Reporter",
+      "Loader",
+      "RewardLoader",
+    ];
+    for (const name of base) knownObjects.add(name);
+    const names = Array.from(knownObjects).sort((a, b) => a.localeCompare(b)).slice(0, 120);
+    for (const name of names) {
+      if (current.has(name)) continue;
+      const opt = document.createElement("option");
+      opt.value = name;
+      dl.appendChild(opt);
+    }
+  }
 })();
